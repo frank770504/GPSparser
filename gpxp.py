@@ -108,8 +108,18 @@ sz = np.size(pos_nplist, axis=0)
 vx = np.mean(np.abs(pos_nplist[1:,0]-pos_nplist[0:sz-1,0]))
 vy = np.mean(np.abs(pos_nplist[1:,1]-pos_nplist[0:sz-1,1]))
 
-print vx
-print vy
+covx = np.cov(np.abs(pos_nplist[1:,0]-pos_nplist[0:sz-1,0]))
+covy = np.cov(np.abs(pos_nplist[1:,1]-pos_nplist[0:sz-1,1]))
+
+A = np.matrix('1 0 1 0;\
+               0 1 0 1;\
+               0 0 1 0;\
+               0 0 0 1')
+
+C = np.matrix('1 0 0 0;\
+               0 1 0 0')
+
+Sig = np.diagflat([covx, covy, covx, covy])
 
 plt.figure()
 plt.plot(pos_nplist[:,0], pos_nplist[:,1], '.', label='path')
@@ -146,4 +156,4 @@ anim = animation.FuncAnimation(fig, animate, init_func=init,\
 # Set up formatting for the movie files
 #anim.save('basic_animation.mp4', writer='mencoder', fps=30)
 
-plt.show()
+#plt.show()
