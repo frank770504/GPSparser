@@ -38,7 +38,7 @@ def get_gps_list(name):
 					D2R(point.longitude), \
 					point.elevation, \
 					time.mktime(d.timetuple()) + \
-					1e-6 * d.microsecond, point.speed)
+						1e-6 * d.microsecond, point.speed)
 				gps_list.append(p)
 	return gps_list
 
@@ -95,6 +95,22 @@ for name in f_names:
 	pos_nplist = get_pos_nplist(gps_list)
 	print "distance: {}".format(get_nplist_dist(pos_nplist))
 
+def reform_nplist(nplist):
+	sz = nplist.size
+	mn = np.ones((1,sz))*np.mean(nplist)
+	return (nplist - mn)*10**7
+
+pos_nplist = np.vstack([reform_nplist(pos_nplist[:,0]), reform_nplist(pos_nplist[:,1])])
+pos_nplist = np.transpose(pos_nplist)
+
+sz = np.size(pos_nplist, axis=0)
+
+vx = np.mean(np.abs(pos_nplist[1:,0]-pos_nplist[0:sz-1,0]))
+vy = np.mean(np.abs(pos_nplist[1:,1]-pos_nplist[0:sz-1,1]))
+
+print vx
+print vy
+
 plt.figure()
 plt.plot(pos_nplist[:,0], pos_nplist[:,1], '.', label='path')
 plt.title('GPS Path')
@@ -125,7 +141,7 @@ def animate(i):
 
 # call the animator.  blit=True means only re-draw the parts that have changed.
 anim = animation.FuncAnimation(fig, animate, init_func=init,\
-                               frames=pos_nplist.size, interval=20, blit=True)
+                               frames=sz, interval=20, blit=True)
 
 # Set up formatting for the movie files
 #anim.save('basic_animation.mp4', writer='mencoder', fps=30)
