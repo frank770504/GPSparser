@@ -1,12 +1,12 @@
 import sys
 import time
+import math
+
 import datetime
 import gpxpy
 import gpxpy.gpx
-import math
 import numpy as np
 import matplotlib
-
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
@@ -113,65 +113,12 @@ def turnback_nplist(nplist, mn):
 	back = nplist/(10**7) + mn
 	return back
 
-class gaussian_noise_diag:
-	def __init__(self, mu, cov, sz):
-		self.mu = mu
-		self.cov = cov
-		self.sz = sz
-	def get_mat(self):
-		return np.diagflat(np.random.normal(self.mu, self.cov, self.sz))
+import Kalman as kf
 
-class gaussian_noise_vec:
-	def __init__(self, mu, cov, shape):
-		self.mu = mu
-		self.cov = cov
-		self.shape = shape
-	def get_mat(self):
-		r, c = self.shape
-		sz = r*c
-		return np.random.normal(self.mu, self.cov, sz).reshape(self.shape)
-
-def Kalman_filter(mu, Sig, z, u, R, Q):
-	from numpy.linalg import inv
-	mu = np.atleast_2d(mu).T
-	z = np.atleast_2d(z).T
-	err = gaussian_noise_vec(0, 0.01, mu.shape)
-	u = np.atleast_2d(u).T
-	A = np.matrix('1 0 1 0;\
-	               0 1 0 1;\
-	               0 0 1 0;\
-	               0 0 0 1')
-
-#	C = np.matrix('1 0 0 0;\
-#	               0 1 0 0')
-
-	C = np.eye(4)
-
-	B = np.matrix('0 0;\
-	               0 0;\
-                       1 0;\
-                       0 1')
-	mu_pre = A*mu + B*u + err.get_mat()
-	Sig_pre = A*Sig*A.T + R
-	K = Sig_pre*C.T*inv(C*Sig_pre*C.T + Q)
-	mu_post = mu_pre + K*(z - C*mu_pre)
-	Sig_post = (np.eye(4) - K*C)*Sig_pre
-	if 0:
-		print '{} mu'.format(mu.T)
-		print '{} Sig'.format(np.diag(Sig))
-	#	print u.T
-		print '{} z'.format(z.T)
-		print '{} mu_pre_t'.format(mu_pre.T)
-		print '{} Sig_pre'.format(np.diag(Sig_pre))
-	#	print '{} C*Sig_pre*C.T + Q'.format(inv(C*Sig_pre*C.T + Q))
-	#	print '{} Sig_pre*C'.format(Sig_pre*C.T)
-		print '{} K'.format(K)
-		print '{} R'.format(np.diag(R))
-		print '{} Q'.format(np.diag(Q))
-	#	print '{} K*(z - C*mu_pre)'.format((K*(z - C*mu_pre)).T)
-		print '{} mu_post'.format(mu_post.T)
-		print ''
-	return (mu_post.T, Sig_post, mu_pre.T)
+def moving_average(a, n=3) :
+	ret = np.cumsum(a, dtype=float)
+	ret[n:] = ret[n:] - ret[:-n]
+	return ret[n - 1:] / n
 
 f_names = sys.argv
 f_names = f_names[1:]
@@ -200,17 +147,9 @@ Sig = np.diagflat([covx, covy, covx, covy])
 
 covavg = np.mean([covx, covy])
 
-R = gaussian_noise_diag(0, covavg, 4)
-Q = gaussian_noise_diag(0, covavg, 4)
-
 mu_nplist = np.hstack([pos_nplist[0,:], 0, 0])
 pre_nplist = np.hstack([pos_nplist[0,:], 0, 0])
 Sig_nplist = np.diag(Sig)
-
-def moving_average(a, n=3) :
-	ret = np.cumsum(a, dtype=float)
-	ret[n:] = ret[n:] - ret[:-n]
-	return ret[n - 1:] / n
 
 vx_list = np.insert(vx_list, 0, 0)
 vy_list = np.insert(vy_list, 0, 0)
@@ -218,12 +157,26 @@ vy_list = np.insert(vy_list, 0, 0)
 V = np.vstack([vx_list, vy_list]).T
 pos_nplist = np.hstack([pos_nplist, V])
 
+A = np.matrix('1 0 1 0;\
+               0 1 0 1;\
+               0 0 1 0;\
+               0 0 0 1')
+
+C = np.eye(4)
+
+B = np.matrix('0 0;\
+               0 0;\
+               1 0;\
+               0 1')
+
+kalman = kf.Kalman_filter(A, B, C, 0.01, covx, covy)
+
 for z in pos_nplist:
 	u = np.zeros(2)
 	mu = mu_nplist[-1,:] if mu_nplist.size>4 else mu_nplist
 	Sig = Sig_nplist[-1,:] if mu_nplist.size>4 else Sig_nplist
 	Sig = np.diagflat(Sig)
-	mu_nxt, Sig_nxt, pre = Kalman_filter(mu, Sig, z, u, np.fabs(R.get_mat()), np.fabs(Q.get_mat()))
+	mu_nxt, Sig_nxt, pre = kalman.do_filter(mu, Sig, z, u)
 	mu_nplist = np.vstack([mu_nplist, mu_nxt])
 	pre_nplist = np.vstack([pre_nplist, pre])
 	Sig_nplist = np.vstack([Sig_nplist, np.diag(Sig_nxt)])
