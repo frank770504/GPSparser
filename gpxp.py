@@ -54,9 +54,11 @@ def cal_dist(pos1, pos2):
 	# pos = [lon, lat, ele]
 	p1 = (pos2[0] - pos1[0]) * math.cos( 0.5 * (pos2[1] + pos1[1]) )
 	p2 = (pos2[1] - pos1[1])
-	distance = (EarthRadius + 0.5 * math.fabs( pos2[2] - pos1[2]) ) *\
-		math.sqrt( p1**2 + p2**2 )
-	#distance = (EarthRadius) * math.sqrt( p1**2 + p2**2 )
+	if np.size(pos1) == 3:
+		distance = (EarthRadius + 0.5 * math.fabs( pos2[2] - pos1[2]) ) *\
+			math.sqrt( p1**2 + p2**2 )
+	elif np.size(pos1) == 2:
+		distance = (EarthRadius) * math.sqrt( p1**2 + p2**2 )
 	return distance
 
 def get_gps_dist(gps1, gps2):
@@ -66,10 +68,17 @@ def get_gps_dist(gps1, gps2):
 	return dist
 
 def get_nplist_dist(pos_nplist):
-	pos1 = pos_nplist[0].tolist()
+	sz = np.size(np.shape(pos_nplist[0]))
+	if sz == 1:
+		pos1 = pos_nplist[0].tolist()
+	elif sz == 2:
+		pos1 = np.array(pos_nplist[0]).reshape(-1,).tolist()
 	dist = 0
 	for pos in pos_nplist:
-		pos2 = pos.tolist()
+		if sz == 1:
+			pos2 = pos.tolist()
+		elif sz == 2:
+			pos2 = np.array(pos).reshape(-1,).tolist()
 		dist = dist + cal_dist(pos1, pos2)
 		pos1 = pos2
 	return dist
@@ -87,6 +96,83 @@ def get_boundary(pos_nplist):
 	ymin = ymin - gap
 	return (xmax, xmin, ymax, ymin)
 
+def reform_nplist(nplist):
+	row, col = np.shape(nplist)
+	mnnplist = np.array([])
+	for c in range(0,col,1):
+		nptemp = nplist[:,c]
+		sz = np.size(nptemp)
+		mn = np.ones((1,sz))*np.mean(nptemp)
+		mnnplist = np.vstack([mnnplist, mn]) if mnnplist.size > 0 else mn
+		nplist[:,c] = (nptemp - mn)*10**7
+	mnnplist = mnnplist.T
+	return nplist, mnnplist
+
+def turnback_nplist(nplist, mn):
+	nplist = nplist[1:, :]
+	back = nplist/(10**7) + mn
+	return back
+
+class gaussian_noise_diag:
+	def __init__(self, mu, cov, sz):
+		self.mu = mu
+		self.cov = cov
+		self.sz = sz
+	def get_mat(self):
+		return np.diagflat(np.random.normal(self.mu, self.cov, self.sz))
+
+class gaussian_noise_vec:
+	def __init__(self, mu, cov, shape):
+		self.mu = mu
+		self.cov = cov
+		self.shape = shape
+	def get_mat(self):
+		r, c = self.shape
+		sz = r*c
+		return np.random.normal(self.mu, self.cov, sz).reshape(self.shape)
+
+def Kalman_filter(mu, Sig, z, u, R, Q):
+	from numpy.linalg import inv
+	mu = np.atleast_2d(mu).T
+	z = np.atleast_2d(z).T
+	err = gaussian_noise_vec(0, 0.01, mu.shape)
+	u = np.atleast_2d(u).T
+	A = np.matrix('1 0 1 0;\
+	               0 1 0 1;\
+	               0 0 1 0;\
+	               0 0 0 1')
+
+#	C = np.matrix('1 0 0 0;\
+#	               0 1 0 0')
+
+	C = np.eye(4)
+
+	B = np.matrix('0 0;\
+	               0 0;\
+                       1 0;\
+                       0 1')
+	mu_pre = A*mu + B*u + err.get_mat()
+	Sig_pre = A*Sig*A.T + R
+	K = Sig_pre*C.T*inv(C*Sig_pre*C.T + Q)
+	mu_post = mu_pre + K*(z - C*mu_pre)
+	Sig_post = (np.eye(4) - K*C)*Sig_pre
+	if 0:
+		print '{} mu'.format(mu.T)
+		print '{} Sig'.format(np.diag(Sig))
+	#	print u.T
+		print '{} z'.format(z.T)
+		print '{} mu_pre_t'.format(mu_pre.T)
+		print '{} Sig_pre'.format(np.diag(Sig_pre))
+	#	print '{} C*Sig_pre*C.T + Q'.format(inv(C*Sig_pre*C.T + Q))
+	#	print '{} Sig_pre*C'.format(Sig_pre*C.T)
+		print '{} K'.format(K)
+		print '{} R'.format(np.diag(R))
+		print '{} Q'.format(np.diag(Q))
+	#	print '{} K*(z - C*mu_pre)'.format((K*(z - C*mu_pre)).T)
+		print '{} mu_post'.format(mu_post.T)
+		print ''
+	return (mu_post.T, Sig_post, mu_pre.T)
+
 f_names = sys.argv
 f_names = f_names[1:]
 
@@ -95,34 +181,60 @@ for name in f_names:
 	pos_nplist = get_pos_nplist(gps_list)
 	print "distance: {}".format(get_nplist_dist(pos_nplist))
 
-def reform_nplist(nplist):
-	sz = nplist.size
-	mn = np.ones((1,sz))*np.mean(nplist)
-	return (nplist - mn)*10**7
+pos_nplist, mn = reform_nplist(pos_nplist[:,0:2])
 
-pos_nplist = np.vstack([reform_nplist(pos_nplist[:,0]), reform_nplist(pos_nplist[:,1])])
-pos_nplist = np.transpose(pos_nplist)
+# TODO split to big scale and merge
 
 sz = np.size(pos_nplist, axis=0)
 
-vx = np.mean(np.abs(pos_nplist[1:,0]-pos_nplist[0:sz-1,0]))
-vy = np.mean(np.abs(pos_nplist[1:,1]-pos_nplist[0:sz-1,1]))
+vx_list = pos_nplist[1:,0]-pos_nplist[0:sz-1,0]
+vy_list = pos_nplist[1:,1]-pos_nplist[0:sz-1,1]
 
-covx = np.cov(np.abs(pos_nplist[1:,0]-pos_nplist[0:sz-1,0]))
-covy = np.cov(np.abs(pos_nplist[1:,1]-pos_nplist[0:sz-1,1]))
+vx = np.mean(np.abs(vx_list))
+vy = np.mean(np.abs(vy_list))
 
-A = np.matrix('1 0 1 0;\
-               0 1 0 1;\
-               0 0 1 0;\
-               0 0 0 1')
-
-C = np.matrix('1 0 0 0;\
-               0 1 0 0')
+covx = np.cov(np.abs(vx_list))
+covy = np.cov(np.abs(vy_list))
 
 Sig = np.diagflat([covx, covy, covx, covy])
 
+covavg = np.mean([covx, covy])
+
+R = gaussian_noise_diag(0, covavg, 4)
+Q = gaussian_noise_diag(0, covavg, 4)
+
+mu_nplist = np.hstack([pos_nplist[0,:], 0, 0])
+pre_nplist = np.hstack([pos_nplist[0,:], 0, 0])
+Sig_nplist = np.diag(Sig)
+
+def moving_average(a, n=3) :
+	ret = np.cumsum(a, dtype=float)
+	ret[n:] = ret[n:] - ret[:-n]
+	return ret[n - 1:] / n
+
+vx_list = np.insert(vx_list, 0, 0)
+vy_list = np.insert(vy_list, 0, 0)
+
+V = np.vstack([vx_list, vy_list]).T
+pos_nplist = np.hstack([pos_nplist, V])
+
+for z in pos_nplist:
+	u = np.zeros(2)
+	mu = mu_nplist[-1,:] if mu_nplist.size>4 else mu_nplist
+	Sig = Sig_nplist[-1,:] if mu_nplist.size>4 else Sig_nplist
+	Sig = np.diagflat(Sig)
+	mu_nxt, Sig_nxt, pre = Kalman_filter(mu, Sig, z, u, np.fabs(R.get_mat()), np.fabs(Q.get_mat()))
+	mu_nplist = np.vstack([mu_nplist, mu_nxt])
+	pre_nplist = np.vstack([pre_nplist, pre])
+	Sig_nplist = np.vstack([Sig_nplist, np.diag(Sig_nxt)])
+
+mu_back = turnback_nplist(mu_nplist[:,0:2], mn)
+print "KF distance: {}".format(get_nplist_dist(mu_back))
+
 plt.figure()
-plt.plot(pos_nplist[:,0], pos_nplist[:,1], '.', label='path')
+plt.plot(pos_nplist[:,0], pos_nplist[:,1], '-*', label='raw')
+plt.plot(moving_average(pos_nplist[:,0], 20), moving_average(pos_nplist[:,1], 20), '-*', label='smth')
+plt.plot(mu_nplist[:,0], mu_nplist[:,1], '-+', label='post')
 plt.title('GPS Path')
 plt.xlabel('lat')
 plt.ylabel('lon')
@@ -156,4 +268,4 @@ anim = animation.FuncAnimation(fig, animate, init_func=init,\
 # Set up formatting for the movie files
 #anim.save('basic_animation.mp4', writer='mencoder', fps=30)
 
-#plt.show()
+plt.show()
